@@ -2,6 +2,7 @@ package io.github.gummiangler.droprandomizer;
 
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.attribute.AttributeInstance;
 import org.bukkit.block.Block;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Entity;
@@ -27,6 +28,34 @@ public final class DropRandomizer extends JavaPlugin implements Listener {
 
     private final Map<Material, Material> blockMap = new HashMap<>();
     private final Map<EntityType, EntityType> entityMap = new HashMap<>();
+    private final Set<EntityType> forbiddenMobs = Set.of(
+            EntityType.WANDERING_TRADER,
+            EntityType.FOX,
+            EntityType.BAT,
+            EntityType.ENDER_DRAGON,
+            EntityType.SILVERFISH,
+            EntityType.GOAT,
+            EntityType.FROG,
+            EntityType.GIANT,
+            EntityType.VEX,
+            EntityType.ILLUSIONER,
+            EntityType.CREAKING,
+            EntityType.OCELOT,
+            EntityType.CAMEL,
+            EntityType.BEE,
+            EntityType.HAPPY_GHAST,
+            EntityType.ARMADILLO,
+            EntityType.SNIFFER,
+            EntityType.WOLF,
+            EntityType.ARMOR_STAND,
+            EntityType.ALLAY,
+            EntityType.AXOLOTL,
+            EntityType.ENDERMITE,
+            EntityType.TADPOLE,
+            EntityType.VILLAGER,
+            EntityType.PLAYER,
+            EntityType.UNKNOWN
+    );
 
     private File blockMapFile;
     private File mobMapFile;
@@ -79,7 +108,7 @@ public final class DropRandomizer extends JavaPlugin implements Listener {
         }
 
         for (EntityType entityType : EntityType.values()) {
-            if (entityType.isAlive() && entityType != EntityType.UNKNOWN && entityType != EntityType.PLAYER) {
+            if (entityType.isAlive() && !forbiddenMobs.contains(entityType)) {
                 entities.add(entityType);
             }
         }
@@ -170,19 +199,25 @@ public final class DropRandomizer extends JavaPlugin implements Listener {
         Material drop = blockMap.getOrDefault(original, original);
         event.setDropItems(false);
 
-        int amount = 0;
         Collection<ItemStack> drops = block.getDrops(event.getPlayer().getInventory().getItemInMainHand());
-        for (ItemStack stack : drops) {
-            amount += stack.getAmount();
-        }
-        if (amount == 0) amount = 1;
 
-        ItemStack itemStack = new ItemStack(drop, amount);
-        block.getWorld().dropItemNaturally(
-                block.getLocation().add(0.5, 0.5, 0.5),
-                itemStack
-        );
+        if (drops.isEmpty()) {
+            return;
+        }
+
+        for (ItemStack stack : drops) {
+            int amount = stack.getAmount();
+            if (amount <= 0) continue;
+            ItemStack replacedStack = new ItemStack(drop, amount);
+            block.getWorld().dropItemNaturally(
+                    block.getLocation().add(0.5, 0.5, 0.5),
+                    replacedStack
+            );
+        }
     }
+
+
+
 
     @EventHandler
     public void onEntityDeath(EntityDeathEvent event) {
@@ -190,27 +225,51 @@ public final class DropRandomizer extends JavaPlugin implements Listener {
         EntityType originalType = entity.getType();
         Player killer = event.getEntity().getKiller();
 
-        if (killer == null) return;
+        if (forbiddenMobs.contains(originalType)) {
+            return;
+        }
 
         EntityType mappedType = entityMap.getOrDefault(originalType, originalType);
 
+        Entity fakeEntity = EntityCreator.create(mappedType, entity.getLocation());
+        if (fakeEntity == null) {
+            getLogger().warning("Konnte virtuelle Entity für " + mappedType + " nicht erstellen.");
+            return;
+        }
+
         NamespacedKey lootKey = new NamespacedKey("minecraft", "entities/" + mappedType.name().toLowerCase());
         LootTable lootTable = getLootTable(lootKey);
-        if (lootTable == null) return;
+        if (lootTable == null) {
+            getLogger().warning("LootTable nicht gefunden für: " + lootKey);
+            return;
+        }
 
-        LootContext context = new LootContext.Builder(entity.getLocation())
-                .lootedEntity(entity)
-                .killer(killer)
-                .luck(killer.getAttribute(Attribute.LUCK) != null ?
-                        (float) killer.getAttribute(Attribute.LUCK).getValue() : 0f)
-                .build();
+        LootContext.Builder contextBuilder = new LootContext.Builder(entity.getLocation())
+                .lootedEntity(fakeEntity);
 
+        if (killer != null) {
+            AttributeInstance luckAttribute = killer.getAttribute(Attribute.LUCK);
+            float luck = (luckAttribute != null) ? (float) luckAttribute.getValue() : 0f;
+            contextBuilder.killer(killer).luck(luck);
+        }
+
+        LootContext context = contextBuilder.build();
         Collection<ItemStack> drops = lootTable.populateLoot(new Random(), context);
-
 
         event.getDrops().clear();
         event.getDrops().addAll(drops);
+
+        if (killer != null) {
+            for (ItemStack item : drops) {
+                if (item != null && item.getType() != Material.AIR) {
+                    killer.sendMessage("Drop: " + item.getAmount() + "x " + item.getType());
+                }
+            }
+        }
     }
 
 
+
+
 }
+
