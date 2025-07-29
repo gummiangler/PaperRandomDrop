@@ -1,0 +1,4 @@
+name: DropRandomizer
+version: '1.0-SNAPSHOT'
+main: io.github.gummiangler.droprandomizer.DropRandomizer
+api-version: '1.21'
